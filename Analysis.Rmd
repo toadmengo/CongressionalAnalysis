@@ -1,0 +1,669 @@
+---
+title: "SVD Analysis of Partisanship in U.S. Congress"
+author: "Todd Meng"
+output: html_document
+---
+
+<!--- Begin styling code. --->
+<style type="text/css">
+/* Whole document: */
+body{
+  font-family: "Palatino Linotype", "Book Antiqua", Palatino, serif;
+  font-size: 12pt;
+}
+h1.title {
+  font-size: 38px;
+  text-align: center;
+}
+h4.author {
+  font-size: 18px;
+  text-align: center;
+}
+h4.date {
+  font-size: 18px;
+  text-align: center;
+}
+</style>
+<!--- End styling code. --->
+
+```{r, echo=FALSE,message=FALSE}
+# load in data
+hr116 <- read.csv("Data/hr116.csv")
+hr90 <- read.csv("Data/hr90.csv")
+
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+options(ggrepel.max.overlaps = Inf)
+```
+
+
+
+# Introduction
+
+In this report, we'll be using US Congress data from voteview.com to explore partisanship. Specifically, this report will focus on Texas and New York, as both are very large and politically-influential. We will explore three questions: 
+
+How has partisanship changed for the two states? 
+
+How bipartisan are these two states? 
+
+Does the state that the politician is in influence their voting record? 
+
+In order to analyze this, we'll be utilizing the singular value decomposition of two data sets from the 90th House of Representatives and the 116th House of Representatives. This will give us insight into how partisan the states are and how they have changed over time. For the purposes of this report, we will omit any politician with NA values, since replacing NA with 0 would deceptively position certain politicians differently from their group, and we are not interested in investigating such peculiarities.
+
+# Visualizations
+
+```{r, echo=FALSE}
+# Frequently used functions
+
+# Performs SVD on a congress data set, organizing it into a dataframe
+# Params - congress: the dataset
+#   states: optional, specifying whether the data should filter by state
+# Returns list - left: the dataframe containing the left singular vectors
+# right: data frame containing right vector
+# energy: the energy captured by the first two vectors
+organize_svd <- function(congress, states = NA) {
+  if (!is.na(states)) {
+    # filter by state if needed, then omit nas
+    df_omit_NA <-filter(congress, state_abbrev %in% states) %>% na.omit()
+  } else {
+    # otherwise, just omit NAs
+    df_omit_NA <- congress %>%
+      na.omit() 
+  }
+  # filters out label, performs SVD
+  congress_svd <- df_omit_NA[,-c(1:5)] %>%
+    svd()
+  # save labels
+  congress_labels <- df_omit_NA[,c(1:5)]
+  # organize first two U matrix cols
+  svd_u_df <- data.frame("x" = congress_svd$u[, 1],
+                         "y" = congress_svd$u[, 2]) %>%
+    cbind(congress_labels)
+  
+  # organize the first two v vectors
+  svd_v_df <- data.frame("x" = congress_svd$v[, 1],
+                         "y" = congress_svd$v[, 2])
+  # add a label for whether the role call received over 50% support
+  svd_v_df$total = colSums(na.omit(congress)[,-c(1:5)])
+  svd_v_df$passed = svd_v_df$total > 0
+  
+  # calculate energy
+  sing_vals_sq <- congress_svd$d ^ 2
+  energy = (sum(sing_vals_sq[1:2]) / sum(sing_vals_sq))  
+  # return
+  return(list("left" = svd_u_df, "right" = svd_v_df, "energy" = energy))
+}
+
+# plots the left two singular vectors using the df from organize_svd
+plot_left <- function(svd_u_df, states = NA) {
+  if (is.na(states)) {
+    # graph geom_point of 2 left singular vectors, color = party
+    u_plot <- ggplot(svd_u_df, aes(x = x, y = y, color = party_code))
+  } else {
+    # if state is specified we'll label the states
+    u_plot <- ggplot(svd_u_df, aes(x = x, y = y, 
+                                   color = party_code, shape = state_abbrev))
+  }
+  u_plot <- u_plot +  geom_point() +
+    scale_color_manual(name = "Party",
+                       values = c("D" = "dodgerblue1", 
+                                  "I" = "green", 
+                                  "R" = "firebrick2")) +
+    labs(x = "Left Singular Vector 1", y = "Left Singular Vector 2") +
+    theme_bw(base_size = 12)
+}
+
+# plots the right vectors using the df from organize_svd
+plot_right <- function(svd_v_df) {
+  v_plot <- ggplot(svd_v_df, aes(x = x, y = y, color = total)) +
+    geom_point() +
+    labs(x = "Right Vector 1", y = "Right Vector 2",
+         color = "Yes Votes Minus \nNo Votes") +
+    theme_bw(base_size = 12)
+}
+```
+
+### 1) Overall Partisanship of the House
+
+We'll begin our investigation by analyzing the national trends of partisanship, helping us to contextualize the partisanship of the states of interest. We'll do this using the Singular Value Decomposition equation:
+
+X = UDV
+
+Where X is the input matrix (the data), U is the left singular vectors, D are the singular values/diagonal matrix, and V is the V-transpose matrix, or the right singular vectors. As a result of the SVD equation, the first left singular vector corresponds with the first singular value and the first right singular vector. The singular values are ordered by importance, meaning that the first two singular values, left singular vectors, and right singular vectors should contain the strongest information about the data. To measure how much information, we can calculate the energy of the vectors by squaring the singular values.
+
+```{r, echo=FALSE,message=FALSE}
+# plot the two left singular vectors of the SVD from the 90th house data
+hr90_svd <- organize_svd(hr90)
+# we will flip the y axis, this way the next graphs are consistent with
+# lower value = more democrat
+hr90_svd$left$y = hr90_svd$left$y * -1
+# we also want to flip the x axis, since that way
+# higher value = more bipartisan
+hr90_svd$left$x = hr90_svd$left$x * -1
+hr90_svd$left%>%
+  plot_left() + 
+  labs(title = "SVD of the 90th House of Representatives",
+       y = "-1 * Left Singular Vector 2",
+       x = "-1 * Right Singular Vector 1") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 1.1) This graph plots the two left singular vectors of the singular value decomposition of the data from the 90th House of Representatives. Each dot is a representative, colored along party lines. Based on the party legend, it's reasonable to infer that the second left singular vector, the y-axis, is indicative of partisanship. We multiply the first left singular vector by -1, so that a higher x-axis value will imply a greater bipartisanship score (as we will discover). We multiply the second left singular vector by -1 in order to make it consistent with Graph 1.3, such that a lower partisanship score means a candidate is more likely to vote with Democrats. The energy captured by this graph is `r round(hr90_svd$energy, digits = 3)`.
+
+```{r, echo=FALSE,message=FALSE}
+# make the same adjustment as the last graph
+hr90_svd$right$y = hr90_svd$right$y * -1
+hr90_svd$right$x = hr90_svd$right$x * -1
+# plot the right vectors of the corresponding graph
+hr90_svd$right %>%
+  plot_right() +
+  labs(title = "Right Singular Vectors of SVD from the 90th House",
+       y = "-1 * Right Vector 2",
+       x = "-1 * Right Vector 1") +
+  theme(plot.title = element_text(size =16, hjust = 0.5),
+        legend.title = element_text(size = 12)) +
+  guides(shape=guide_legend(title="Recieved \n>50% support"))
+```
+
+Graph 1.2) This graph plots the corresponding right singular vectors, the principal component axes, of the SVD of the data from the 90th House of Representatives. We can use this graph to understand the x-axis of Graph 1.1 better. As seen in this graph, role calls with a lighter shade of blue received significant support, and tend to be on the right side of the graph. Thus, we can infer that politicians that have a higher x-axis score in Graph 1.1 are more likely to support bills with broad support. Therefore, it's reasonable to suggest that the x-axis of Graph 1.1 represents bipartisanship, with a higher value meaning a more bipartisan politician (this is why we flipped the x-axis).
+
+```{r, echo=FALSE,message=FALSE}
+# plot the two left singular vectors of the SVD from the 116th house data
+hr116_svd <- organize_svd(hr116)
+# flip the y axis, since we want greater y-value = more bipartisan
+hr116_svd$left$y = hr116_svd$left$y * -1
+hr116_svd$left %>%
+  plot_left() + 
+  labs(title = "SVD of the 116th House of Representatives",
+       y = "-1 * Left Singular Vector 2") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 1.3) This graph plots the two left singular vectors of the singular value decomposition of the data from the 116th House of Representatives. Each dot is a representative, colored along party lines. Based on the graph, it's reasonable to infer that the first left singular vector, the x-axis, is a good indicator of partisanship. In this case, a more Democratic politician would have a lower x-value, and a Republican a higher one. We multiply the the second left singular vector by -1, as that allows a higher y-axis score to imply a higher bipartisanship score (as we will discover). The energy captured by the two vectors is `r round(hr116_svd$energy, digits=3)`.
+
+```{r, echo=FALSE,message=FALSE}
+# make the same adjustments for the right vectors
+hr116_svd$right$y = hr116_svd$right$y * -1
+# plot
+hr116_svd$right %>%
+  plot_right() +
+  labs(title = "Right Singular Vectors of SVD from the 116th House",
+       y = "-1 * Right Vector 2") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5),
+        legend.title = element_text(size = 12)) +
+  guides(shape=guide_legend(title="Recieved \n>50% support"))
+```
+
+Graph 1.4) This graph plots the corresponding right singular vectors of the SVD of the data from the 116th House of Representatives. Like Graph 1.2, we can use this to infer the meaning of the other left singular vector in Graph 1.3. In this case, we can reasonably infer that the y-axis is some indicator of bipartisanship, with a higher score meaning more bipartisan.
+
+Comparing Graph 1.1 to Graph 1.3, it's clear that the House of Representative has become substantially more polarized. In Graph 1.1, there is considerable overlap between Democrats and Republicans, with many politicians voting more alike their opposing party. In contrast, this seems non-existent in Graph 1.3. Also, the energy captured by Graph 1.1 is substantially lower than the energy from Graph 1.3, likely because politicians in the 90th House of Representatives voted more diversely than the 116th House (making it harder to represent the graph with only two vectors).  
+
+### 2) Overall Partisanship of New York and Texas
+
+After seeing the national trends, we will investigate the partisanship of New York and Texas. How partisan are the two states, and how do they lean politically? How have the two states changed?
+
+```{r, echo=FALSE,message=FALSE}
+# let's investigate these states
+states = c("NY", "TX")
+# get the left singular vector data for hr90
+hr90_partisan_df <- hr90_svd$left
+# rename the y column, which is indicative of partisanship
+colnames(hr90_partisan_df)[colnames(hr90_partisan_df) == "y"] <- "partisanship"
+# to visualize, we'll center partisanship
+hr90_partisan_df$partisanship <- 
+  hr90_partisan_df$partisanship - mean(hr90_partisan_df$partisanship)
+# rename x column, which is indicative of bipartisanship
+colnames(hr90_partisan_df)[colnames(hr90_partisan_df) == "x"] <- 
+  "bipartisanship"
+# to visualize, we'll center bipartisanship
+hr90_partisan_df$bipartisanship <- 
+  hr90_partisan_df$bipartisanship - mean(hr90_partisan_df$bipartisanship)
+
+# get the two left singular vectors for hr116
+hr116_partisan_df <- hr116_svd$left
+# rename the x column, indicative of partisanship
+colnames(hr116_partisan_df)[colnames(hr116_partisan_df) == "x"] <- 
+  "partisanship"
+# to visualize, we'll center partisanship
+hr116_partisan_df$partisanship <- 
+  hr116_partisan_df$partisanship - mean(hr116_partisan_df$partisanship)
+# rename the u column, indicative of bipartisanship
+colnames(hr116_partisan_df)[colnames(hr116_partisan_df) == "y"] <- 
+  "bipartisanship"
+# to visualize, we'll center bipartisanship
+hr116_partisan_df$bipartisanship <- 
+  hr116_partisan_df$bipartisanship - mean(hr116_partisan_df$bipartisanship)
+```
+
+
+```{r, echo=FALSE,message=FALSE}
+# graph the overall partisanship of the two states for the 90th house
+filter(hr90_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(partisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .02) +
+  facet_wrap(~ state_abbrev) +
+  labs(title = "The 90th House of Representatives of New York and Texas",
+       x = "Relative Partisanship 
+       (Left = More Democrat-Aligned, Average = 0)", 
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 2.1) From Graph 1.1, we deduced that the second left singular vector of the SVD was indicative of partisanship. Using that, we graph the partisanship scores of all politicians in New York and Texas from the 90th House of Representatives. In this graph, a lower partisan score indicates a more Democrat-aligned politician, and the graph has average of 0. Interestingly, the graph shows us that New York Representatives were generally more partisan than their Texan counterparts, with most of their politicians being to the left of the center (meaning their voting record aligned with Democrats more). The Texas plot shows us that Texan representatives were substantially more centrist, with a partisan graph that almost resembles a normal plot.
+
+```{r, echo=FALSE,message=FALSE}
+# graph the overall partisanship of the two states for the 116th house
+filter(hr116_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(partisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .015) +
+  facet_wrap(~ state_abbrev)+
+  labs(title = "The 116th House of Representatives of 
+       New York and Texas",
+       x = "Relative Partisanship 
+       (Left = More Democrat-Aligned, Average = 0)", 
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 2.2) In this graph, we use the first singular vector from Graph 1.3, indicative of partisanship, to plot the partisanship scores of New York and Texan representatives in the 116th House. Using this graph, we can see that both Texas and New York's House politicians are very polarized. We can also see that New York politicians are overwhelmingly aligned with Democrats, whereas Texas is only moderately more Republican-aligned. Finally, one interesting note is that the small group of Republican-aligned politicians in New York (the ones on the right side of the NY panel) are less partisan than their Texan counterparts, perhaps due to New York's stronger Democratic base.
+
+Comparing Graph 2.2 to Graph 2.1, it's clear that both states have seen significant polarization. Graph 2.1 showed that members from the 90th House of Representatives from Texas were similar in partisanship, while New York representatives had a small gap in partisanship. In contrast, Graph 2.2 shows both states having a very large gap in partisanship, fitting the overall national trend of increasing polarization. In this case, New York's Democratic tendency solidified, while Texas became a much stronger Republican-leaning state.
+
+### 3) Bipartisanship of New York and Texas
+
+Next, we will investigate the bipartisan axis of both states. Specifically, we're interested in seeing if there is a noticeable difference between the two states.
+
+```{r, echo=FALSE,message=FALSE}
+# plot the bipartisan axis of the two states for th 90th House
+filter(hr90_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(bipartisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .01) +
+  facet_wrap(~ state_abbrev) + 
+  labs(title = "Bipartisanship of New York and Texas Politicians 
+       of the 90th House",
+       x = "Relative Bipartisanship 
+       (Higher Value = More Bipartisan, Average = 0)",
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+# calculate median bipartisanship for NY
+ny_bipartisanship <- median(filter(hr90_partisan_df, 
+                                 state_abbrev == "NY")$bipartisanship)
+# calcualte median bipartisanship for TX
+tx_bipartisanship <- median(filter(hr90_partisan_df, 
+                                 state_abbrev == "TX")$bipartisanship)
+```
+
+Graph 3.1) In Graph 1.1, it was established that first left singular vector from the SVD of the 90th House of Representatives data indicates bipartisanship. This graph plots that vector for Texas and New York. In this case, a bipartisan score below 0 means a below-average bipartisanship, while a positive score indicates above-average bipartisanship. Based on the graph, it's hard to notice a big difference between the two states, with Texas representatives having a median bipartisanship score of `r round(tx_bipartisanship, digits=3)` and New York representatives with a median score of `r round(ny_bipartisanship, digits=3)`. Based on these numbers, Texas representatives from the 90th House were slightly more bipartisan.
+
+```{r, echo=FALSE,message=FALSE}
+# plot the bipartisan axes for the two states for the 116th House
+filter(hr116_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(bipartisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .01)  +
+  facet_wrap(~ state_abbrev) + 
+  labs(title = "Bipartisanship of New York and Texas Politicians 
+       of the 116th House",
+       x = "Relative Bipartisanship \n(Higher Value = More Bipartisan, Average = 0)",
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+# calculate mean bipartisanship for NY
+ny_bipartisanship <- median(filter(hr116_partisan_df, 
+                                 state_abbrev == "NY")$bipartisanship)
+# calcualte mean bipartisanship for TX
+tx_bipartisanship <- median(filter(hr116_partisan_df, 
+                                 state_abbrev == "TX")$bipartisanship)
+```
+
+Graph 3.2) Using -1 * the second left singular vector from the SVD in Graph 1.3 lets us plot the bipartisanship scores of the 116th House of Representatives. Here, we plot those scores for New York and Texas politicians, where a score below 0 indicates lower-than-average bipartisanship. As seen in the graph, New York politicians have a genreally low bipartisanship score, while Texas' politicians are a mix of above-average and below-average bipartisanship. Looking at the median scores reinforce this, with Texas having a median bipartisanship score of `r round(tx_bipartisanship, digits=3)` and New York of `r round(ny_bipartisanship, digits=3)`. This indicates that most of Texas politicians are more bipartisan than average, while a big majority of New York representatives have very below-average bipartisanship.
+
+Comparing the two plots, we can see that Texas has remained a very bipartisan state in both the 90th and 116th House of Representatives, in the national context. On the other hand, New York became considerably less bipartisan than average, with most of their politicians in the 116th House having a very low bipartisanship score. It's surprising that a politically-influential state like New York has such a low bipartisanship. I suspect that this could be due to the nature of New York's politics - their representatives are overwhelmingly Democrats, while Texas has a more balanced mix of Democrats and Republicans. Having a mix of both parties could encourage politicians from that state to work together in their state's interest, whereas having only one strong political party would naturally create more extreme politicians.
+
+### 4) How Important is Geography?
+
+For out next graphs, we will plot a SVD of the two states without the presence of the other states. We'll investigate the role of geography by seeing if the SVD will cluster representatives by state.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+# perform SVD for only the two states for the 90th House
+hr90_states_svd <- organize_svd(hr90, states)
+# plot it
+hr90_states_svd$left %>%
+  plot_left(states) + 
+  labs(title = "SVD of Representatives from New York and Texas
+       from the 90th House",
+       shape = "State") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+  
+```
+
+Graph 4.1) In this graph, we plot the first two left singular vectors from the SVD of the New York and Texas Representatives of the 90th House. Specifically, the SVD is performed with only the data from the two states. As we can see, the graph of the left two singular vectors is able to effectively cluster both party and geography. Republican party members, represented by a red dot, tend to be on the top-right side, while Democratic party members are on the bottom-left, generally. More interestingly, we can see that Texan representatives, represented by a triangle, are mostly on the top-left side of the graph, whereas New York politicians are to the bottom-right of Texan politicians. The energy captured by both axes is `r round(hr90_states_svd$energy, digits=3)`.
+
+```{r, echo=FALSE,message=FALSE,warning=FALSE}
+hr90_states_svd$right %>%
+  plot_right() + 
+  labs(title = "Right Singular Vectors of SVD of NY and TX Politicians
+       from the 90th House") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 4.2) This graph shows the corresponding right singular vectors for the SVD in Graph 4.1. In it, a lighter shade of blue represents a role call that received strong support, an indicator of a bipartisan role call. Based on this graph, we can deduce that the x-axis is a decent indicator of bipartisanship.
+
+Looking at the SVD in Graph 4.1, we can see that there is a grouping of Texas and New York politicians. This ultimately means that, in addition to political lines, representatives from these two states voted similarly to other members of their state to some degree. Based off this, it's reasonable to say that geography played a role in the voting record of the politicians from these two states in the 90th House.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+# perform SVD for only the two states for the 116th House
+hr116_states_svd <- organize_svd(hr116, states)
+# plot it
+hr116_states_svd$left %>%
+  plot_left(states) + 
+  labs(title = "SVD of Representatives from New York and Texas
+       from the 116th House",
+       shape = "State") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 4.3) This graph plots the two left singular vectors from the SVD of the two states' members from the 116th House of Representatives. In the graph, color distinguishes party, while shape represents the state. While the parties are clearly distinguished by the plot's x-axis, there doesn't seem to be any cluster by state. The only noticeable peculiarity is that New York's Republicans are more to the left and to the bottom than Texas's Republicans, but no difference seems to exist among the Democrats of either state. The two vectors have a combined energy of `r round(hr116_states_svd$energy, digits = 3)`.
+
+```{r, echo=FALSE,message=FALSE}
+hr116_states_svd$right %>%
+  plot_right() + 
+  labs(title = "Right Singular Vectors of SVD of NY and TX Politicians
+       from the 116th House") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+Graph 4.4) We can then graph the right singular vectors of the SVD from Graph 4.3. As shown in the legend, role calls with broad support have a lighter shade of blue. The graph is similar to Graph 1.4, seeming to indicate that the y-axis represents bipartisanship.
+
+We can clearly see an interesting development between the Graph 4.1 and Graph 4.3. In Graph 4.1, representing the SVD of the data from the two states' members of the 90th House, there is a noticeable cluster of Texas politicians and New York politicians. On the other hand, in the 116th House data, there is no strong cluster/indicator of state. Therefore, we see that politicians in the 90th House were somewhat influenced by their geography and voted along other members of their state, to a small degree. On the other hand, state was not big a factor in the 116th House, as there wasn't a cluster for one state or the other. In other words, there were very few roll calls in which the politician's state was important.
+
+# Conclusion
+
+Using the standard value decomposition of New York's and Texas's representatives, we were able to gain interesting insights into these two states. Most obviously, the national trend of increasing polarization has affected both states significantly. Looking at the 90th House of Representatives, we saw that many of Texas's representatives were close to the average partisanship score, meaning that they were very nonpartisan. New York's representatives were more strongly Democrat-leaning. However, in the 116th Congress, the House was considerably more divided, and correspondingly, New York's and Texas's representatives had much more extreme partisanship. Another aspect of the data that we explored was bipartisanship, where we discovered that Texas's representatives from the 90th and 116th were generally moderately bipartisan, whereas New York's 116th representatives were very non-bipartisan. Finally, we used SVD to cluster New York's and Texas's House members together, in order to see if geography played a role in the politicians' voting record. Based on that SVD, we were able to identify clusters representing the state of the politician in the 90th House, but not the 116th House, meaning that geography was a factor in voting for only the 90th House.
+
+# Code Appendix
+
+Pre-section
+```{r, eval=FALSE,warning=FALSE}
+# load in data
+hr116 <- read.csv("Data/hr116.csv")
+hr90 <- read.csv("Data/hr90.csv")
+
+library(tidyr)
+library(ggplot2)
+library(dplyr)
+library(ggrepel)
+options(ggrepel.max.overlaps = Inf)
+```
+```{r, eval=FALSE,warning=FALSE}
+# Frequently used functions
+
+# Performs SVD on a congress data set, organizing it into a dataframe
+# Params - congress: the dataset
+#   states: optional, specifying whether the data should filter by state
+# Returns list - left: the dataframe containing the left singular vectors
+# right: data frame containing right vector
+# energy: the energy captured by the first two vectors
+organize_svd <- function(congress, states = NA) {
+  if (!is.na(states)) {
+    # filter by state if needed, then omit nas
+    df_omit_NA <-filter(congress, state_abbrev %in% states) %>% na.omit()
+  } else {
+    # otherwise, just omit NAs
+    df_omit_NA <- congress %>%
+      na.omit() 
+  }
+  # filters out label, performs SVD
+  congress_svd <- df_omit_NA[,-c(1:5)] %>%
+    svd()
+  # save labels
+  congress_labels <- df_omit_NA[,c(1:5)]
+  # organize first two U matrix cols
+  svd_u_df <- data.frame("x" = congress_svd$u[, 1],
+                         "y" = congress_svd$u[, 2]) %>%
+    cbind(congress_labels)
+  
+  # organize the first two v vectors
+  svd_v_df <- data.frame("x" = congress_svd$v[, 1],
+                         "y" = congress_svd$v[, 2])
+  # add a label for whether the role call received over 50% support
+  svd_v_df$total = colSums(na.omit(congress)[,-c(1:5)])
+  svd_v_df$passed = svd_v_df$total > 0
+  
+  # calculate energy
+  sing_vals_sq <- congress_svd$d ^ 2
+  energy = (sum(sing_vals_sq[1:2]) / sum(sing_vals_sq))  
+  # return
+  return(list("left" = svd_u_df, "right" = svd_v_df, "energy" = energy))
+}
+
+# plots the left two singular vectors using the df from organize_svd
+plot_left <- function(svd_u_df, states = NA) {
+  if (is.na(states)) {
+    # graph geom_point of 2 left singular vectors, color = party
+    u_plot <- ggplot(svd_u_df, aes(x = x, y = y, color = party_code))
+  } else {
+    # if state is specified we'll label the states
+    u_plot <- ggplot(svd_u_df, aes(x = x, y = y, 
+                                   color = party_code, shape = state_abbrev))
+  }
+  u_plot <- u_plot +  geom_point() +
+    scale_color_manual(name = "Party",
+                       values = c("D" = "dodgerblue1", 
+                                  "I" = "green", 
+                                  "R" = "firebrick2")) +
+    labs(x = "Left Singular Vector 1", y = "Left Singular Vector 2") +
+    theme_bw(base_size = 12)
+}
+
+# plots the right vectors using the df from organize_svd
+plot_right <- function(svd_v_df) {
+  v_plot <- ggplot(svd_v_df, aes(x = x, y = y, color = total)) +
+    geom_point() +
+    labs(x = "Right Vector 1", y = "Right Vector 2",
+         color = "Yes Votes Minus \nNo Votes") +
+    theme_bw(base_size = 12)
+}
+```
+Section 1
+```{r, eval=FALSE,warning=FALSE}
+# Graph 1.1
+# plot the two left singular vectors of the SVD from the 90th house data
+hr90_svd <- organize_svd(hr90)
+# we will flip the y axis, this way the next graphs are consistent with
+# lower value = more democrat
+hr90_svd$left$y = hr90_svd$left$y * -1
+# we also want to flip the x axis, since that way
+# higher value = more bipartisan
+hr90_svd$left$x = hr90_svd$left$x * -1
+hr90_svd$left%>%
+  plot_left() + 
+  labs(title = "SVD of the 90th House of Representatives",
+       y = "-1 * Left Singular Vector 2",
+       x = "-1 * Right Singular Vector 1") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 1.2
+# make the same adjustment as the last graph
+hr90_svd$right$y = hr90_svd$right$y * -1
+hr90_svd$right$x = hr90_svd$right$x * -1
+# plot the right vectors of the corresponding graph
+hr90_svd$right %>%
+  plot_right() +
+  labs(title = "Right Vectors of SVD from the 90th House",
+       y = "-1 * Right Vector 2",
+       x = "-1 * Right Vector 1") +
+  theme(plot.title = element_text(size =16, hjust = 0.5),
+        legend.title = element_text(size = 12))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 1.3
+# plot the two left singular vectors of the SVD from the 116th house data
+hr116_svd <- organize_svd(hr116)
+# flip the y axis, since we want greater y-value = more bipartisan
+hr116_svd$left$y = hr116_svd$left$y * -1
+hr116_svd$left %>%
+  plot_left() + 
+  labs(title = "SVD of the 116th House of Representatives",
+       y = "-1 * Left Singular Vector 2") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 1.4
+# make the same adjustments for the right vectors
+hr116_svd$right$y = hr116_svd$right$y * -1
+# plot
+hr116_svd$right %>%
+  plot_right() +
+  labs(title = "Right Vectors of SVD from the 116th House",
+       y = "-1 * Right Vector 2") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5),
+        legend.title = element_text(size = 12))
+```
+Pre-section 2 and 3
+```{r, eval=FALSE,warning=FALSE}
+# Data for graphs 2 and 3
+# let's investigate these states
+states = c("NY", "TX")
+# get the left singular vector data for hr90
+hr90_partisan_df <- hr90_svd$left
+# rename the y column, which is indicative of partisanship
+colnames(hr90_partisan_df)[colnames(hr90_partisan_df) == "y"] <- "partisanship"
+# to visualize, we'll center partisanship
+hr90_partisan_df$partisanship <- 
+  hr90_partisan_df$partisanship - mean(hr90_partisan_df$partisanship)
+# rename x column, which is indicative of bipartisanship
+colnames(hr90_partisan_df)[colnames(hr90_partisan_df) == "x"] <- 
+  "bipartisanship"
+# to visualize, we'll center bipartisanship
+hr90_partisan_df$bipartisanship <- 
+  hr90_partisan_df$bipartisanship - mean(hr90_partisan_df$bipartisanship)
+
+# get the two left singular vectors for hr116
+hr116_partisan_df <- hr116_svd$left
+# rename the x column, indicative of partisanship
+colnames(hr116_partisan_df)[colnames(hr116_partisan_df) == "x"] <- 
+  "partisanship"
+# to visualize, we'll center partisanship
+hr116_partisan_df$partisanship <- 
+  hr116_partisan_df$partisanship - mean(hr116_partisan_df$partisanship)
+# rename the u column, indicative of bipartisanship
+colnames(hr116_partisan_df)[colnames(hr116_partisan_df) == "y"] <- 
+  "bipartisanship"
+# to visualize, we'll center bipartisanship
+hr116_partisan_df$bipartisanship <- 
+  hr116_partisan_df$bipartisanship - mean(hr116_partisan_df$bipartisanship)
+```
+Section 2
+```{r, eval=FALSE,warning=FALSE}
+# Graph 2.1
+# graph the overall partisanship of the two states for the 90th house
+filter(hr90_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(partisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .02) +
+  facet_wrap(~ state_abbrev) +
+  labs(title = "The 90th House of Representatives of New York and Texas",
+       x = "Relative Partisanship 
+       (Left = More Democrat-Aligned, Average = 0)", 
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 2.2
+# graph the overall partisanship of the two states for the 116th house
+filter(hr116_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(partisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .015) +
+  facet_wrap(~ state_abbrev)+
+  labs(title = "The 116th House of Representatives of 
+       New York and Texas",
+       x = "Relative Partisanship 
+       (Left = More Democrat-Aligned, Average = 0)", 
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+Section 3
+```{r, eval=FALSE,warning=FALSE}
+# Graph 3.1
+# plot the bipartisan axis of the two states for th 90th House
+filter(hr90_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(bipartisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .01) +
+  facet_wrap(~ state_abbrev) + 
+  labs(title = "Bipartisanship of New York and Texas Politicians 
+       of the 90th House",
+       x = "Relative Bipartisanship 
+       (Higher Value = More Bipartisan, Average = 0)",
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+# calculate median bipartisanship for NY
+ny_bipartisanship <- median(filter(hr90_partisan_df, 
+                                 state_abbrev == "NY")$bipartisanship)
+# calcualte median bipartisanship for TX
+tx_bipartisanship <- median(filter(hr90_partisan_df, 
+                                 state_abbrev == "TX")$bipartisanship)
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 3.2
+# plot the bipartisan axes for the two states for the 116th House
+filter(hr116_partisan_df, state_abbrev %in% states) %>%
+  ggplot(mapping = aes(bipartisanship, group = state_abbrev)) +
+  geom_histogram(binwidth = .01)  +
+  facet_wrap(~ state_abbrev) + 
+  labs(title = "Bipartisanship of New York and Texas Politicians 
+       of the 116th House",
+       x = "Relative Bipartisanship 
+       (Higher Value = More Bipartisan, Average = 0)",
+       y = "Count") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+# calculate mean bipartisanship for NY
+ny_bipartisanship <- median(filter(hr116_partisan_df, 
+                                 state_abbrev == "NY")$bipartisanship)
+# calcualte mean bipartisanship for TX
+tx_bipartisanship <- median(filter(hr116_partisan_df, 
+                                 state_abbrev == "TX")$bipartisanship)
+```
+Section 4
+```{r, eval=FALSE,warning=FALSE}
+# graph 4.1
+# perform SVD for only the two states for the 90th House
+hr90_states_svd <- organize_svd(hr90, states)
+# plot it
+hr90_states_svd$left %>%
+  plot_left(states) + 
+  labs(title = "SVD of Representatives from New York and Texas
+       from the 90th House",
+       shape = "State") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 4.2
+# plot the right vectors
+hr90_states_svd$right %>%
+  plot_right()+ 
+  labs(title = "Right Vectors of SVD of NY and TX politicians
+       from the 90th House",
+       shape = "Passed") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# Graph 4.3
+# perform SVD for only the two states for the 116th House
+hr116_states_svd <- organize_svd(hr116, states)
+# plot it
+hr116_states_svd$left %>%
+  plot_left(states) + 
+  labs(title = "SVD of Representatives from New York and Texas
+       from the 116th House") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+```{r, eval=FALSE,warning=FALSE}
+# graph 4.4
+# plot the right vectors
+hr116_states_svd$right %>%
+  plot_right() + 
+  labs(title = "Right Vectors of SVD of NY and TX Politicians
+       from the 116th House") +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
